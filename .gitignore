@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+release/
+
+# Electron-builder / packager cache
+.cache/
+.dist/
+
+# Keep build/ only for app icons (used by electron-builder)
+build/*
+!build/icon.ico
+!build/icon.png
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Env / secrets
+.env
+.env.local

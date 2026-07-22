@@ -1,0 +1,66 @@
+{
+  "name": "markdown-edit-tool",
+  "version": "1.0.0",
+  "description": "A feature-rich Markdown editor with live preview",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-packager . \"MarkdownEditor\" --platform=win32 --arch=x64 --out=release --overwrite --icon=build/icon.ico --ignore=release --ignore=node_modules/electron-builder --ignore=node_modules/electron-packager --ignore=build"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^26.15.3",
+    "electron-packager": "^17.1.2"
+  },
+  "dependencies": {
+    "codemirror": "^5.65.21",
+    "diff": "^5.2.2",
+    "dompurify": "^3.4.12",
+    "highlight.js": "^11.11.1",
+    "marked": "^18.0.6",
+    "mermaid": "^11.16.0"
+  },
+  "build": {
+    "appId": "com.markdown.edit-tool",
+    "productName": "Markdown Editor",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "styles.css",
+      "renderer.js",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "portable": {
+      "artifactName": "MarkdownEditor-Portable-v${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "artifactName": "MarkdownEditor-Setup-v${version}.exe"
+    }
+  }
+}

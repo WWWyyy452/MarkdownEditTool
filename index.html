@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: file:;">
+  <title>Markdown Editor</title>
+  <link rel="stylesheet" href="node_modules/codemirror/lib/codemirror.css">
+  <link rel="stylesheet" href="node_modules/codemirror/theme/dracula.css">
+  <link rel="stylesheet" href="node_modules/codemirror/theme/eclipse.css">
+  <link rel="stylesheet" href="node_modules/codemirror/theme/idea.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Custom Titlebar -->
+  <div id="titlebar" class="titlebar">
+    <div class="titlebar-drag">
+      <span class="titlebar-icon">M↓</span>
+      <span id="titlebar-title" class="titlebar-title">Markdown Editor</span>
+      <span id="titlebar-filename" class="titlebar-filename"></span>
+    </div>
+    <div class="titlebar-actions">
+      <button id="btn-pin" class="titlebar-btn" title="置顶显示">📌</button>
+      <button id="btn-float" class="titlebar-btn" title="悬浮模式">🗗</button>
+      <button id="btn-min" class="titlebar-btn" title="最小化">─</button>
+      <button id="btn-max" class="titlebar-btn" title="最大化">□</button>
+      <button id="btn-close" class="titlebar-btn close-btn" title="关闭">✕</button>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div id="toolbar" class="toolbar">
+    <div class="toolbar-group">
+      <button class="tb-btn" data-cmd="h2" title="插入 H2 副标题"><span class="tb-ico">H2</span><span class="tb-lbl">标题</span></button>
+      <button class="tb-btn" data-cmd="h3" title="插入 H3 小标题"><span class="tb-ico">H3</span><span class="tb-lbl">小标题</span></button>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-group">
+      <button class="tb-btn" data-cmd="bold" title="粗体 (Ctrl+B)"><span class="tb-ico"><b>B</b></span><span class="tb-lbl">粗体</span></button>
+      <button class="tb-btn" data-cmd="italic" title="斜体 (Ctrl+I)"><span class="tb-ico"><i>I</i></span><span class="tb-lbl">斜体</span></button>
+      <button class="tb-btn" data-cmd="strikethrough" title="删除线"><span class="tb-ico"><s>S</s></span><span class="tb-lbl">删除</span></button>
+      <button class="tb-btn" data-cmd="inlinecode" title="行内代码"><span class="tb-ico">&lt;/&gt;</span><span class="tb-lbl">代码</span></button>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-group">
+      <button class="tb-btn" data-cmd="ul" title="无序列表"><span class="tb-ico">≡</span><span class="tb-lbl">列表</span></button>
+      <button class="tb-btn" data-cmd="ol" title="有序列表（自动编号）"><span class="tb-ico">1.</span><span class="tb-lbl">编号</span></button>
+      <button class="tb-btn" data-cmd="task" title="任务清单"><span class="tb-ico">☑</span><span class="tb-lbl">任务</span></button>
+      <button class="tb-btn" data-cmd="quote" title="引用 (Ctrl+Q)"><span class="tb-ico">❝</span><span class="tb-lbl">引用</span></button>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-group">
+      <button class="tb-btn" data-cmd="codeblock" title="代码块（有选区则包裹）"><span class="tb-ico">{ }</span><span class="tb-lbl">块代码</span></button>
+      <button class="tb-btn" data-cmd="table" title="插入 3×3 表格模板"><span class="tb-ico">⊞</span><span class="tb-lbl">表格</span></button>
+      <button class="tb-btn" data-cmd="link" title="链接 (Ctrl+K)"><span class="tb-ico">🔗</span><span class="tb-lbl">链接</span></button>
+      <button class="tb-btn" data-cmd="image" title="图片"><span class="tb-ico">🖼</span><span class="tb-lbl">图片</span></button>
+      <button class="tb-btn" data-cmd="hr" title="分隔线 ---"><span class="tb-ico">―</span><span class="tb-lbl">分割线</span></button>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-group">
+      <button class="tb-btn" data-cmd="open" title="打开 .md / .txt 文件"><span class="tb-ico">📂</span><span class="tb-lbl">打开</span></button>
+      <button class="tb-btn" data-cmd="save" title="保存为 .md"><span class="tb-ico">💾</span><span class="tb-lbl">保存</span></button>
+      <button class="tb-btn" data-cmd="exporthtml" title="导出 (HTML / PDF / 更多)"><span class="tb-ico">⬇</span><span class="tb-lbl">导出</span></button>
+      <button class="tb-btn" data-cmd="sample" title="加载一篇示例 Markdown"><span class="tb-ico">📄</span><span class="tb-lbl">示例</span></button>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-group">
+      <button id="btn-version" class="tb-btn" title="版本历史"><span class="tb-ico">📜</span><span class="tb-lbl">版本</span></button>
+      <button id="btn-history" class="tb-btn" title="最近打开的文件"><span class="tb-ico">🕒</span><span class="tb-lbl">历史</span></button>
+      <button id="btn-toc" class="tb-btn" title="文档大纲"><span class="tb-ico">📑</span><span class="tb-lbl">大纲</span></button>
+      <button id="btn-ai" class="tb-btn" title="AI 助手"><span class="tb-ico">🤖</span><span class="tb-lbl">AI</span></button>
+      <button id="btn-settings" class="tb-btn" title="设置"><span class="tb-ico">⚙</span><span class="tb-lbl">设置</span></button>
+    </div>
+  </div>
+
+  <!-- History dropdown (hidden by default, positioned under the history button) -->
+  <div id="history-dropdown" class="history-dropdown hidden">
+    <div class="history-header">
+      <span>最近打开的文件</span>
+      <button id="history-clear" class="history-clear-btn" title="清空历史">清空</button>
+    </div>
+    <div id="history-list" class="history-list"></div>
+  </div>
+
+  <!-- Tab Bar -->
+  <div id="tabbar" class="tabbar">
+    <div id="tab-list" class="tab-list"></div>
+    <button id="tab-new" class="tab-new-btn" title="新建标签页 (Ctrl+N)">+</button>
+  </div>
+
+  <!-- TOC Sidebar -->
+  <div id="toc-panel" class="toc-panel hidden">
+    <div class="toc-header">
+      <span>📑 文档大纲</span>
+      <button id="toc-close" class="toc-close-btn" title="关闭大纲">✕</button>
+    </div>
+    <div id="toc-list" class="toc-list"></div>
+  </div>
+
+  <!-- Version History Sidebar -->
+  <div id="version-panel" class="version-panel hidden">
+    <div class="version-header">
+      <span class="version-title">📜 版本历史</span>
+      <button id="version-undo" class="version-undo-btn" title="撤销上一次 AI 编辑">↶ 撤销</button>
+      <button id="version-close" class="version-close-btn" title="关闭">✕</button>
+    </div>
+    <div id="version-list" class="version-list"></div>
+    <div id="version-diff" class="version-diff hidden"></div>
+    <div class="version-footer">
+      <button id="version-snapshot" class="version-snapshot-btn" title="手动创建当前状态的快照">+ 创建快照</button>
+    </div>
+  </div>
+
+  <!-- Main Editor Area -->
+  <div id="main-container" class="main-container">
+    <div id="editor-pane" class="editor-pane">
+      <textarea id="editor"></textarea>
+    </div>
+    <div id="divider" class="divider"></div>
+    <div id="preview-pane" class="preview-pane">
+      <div id="preview" class="preview-content"></div>
+    </div>
+  </div>
+
+  <!-- Status Bar -->
+  <div id="statusbar" class="statusbar">
+    <span id="status-lines">行: 1</span>
+    <span id="status-words">词: 0</span>
+    <span id="status-chars">字符: 0</span>
+    <span class="status-spacer"></span>
+    <span id="status-cursor">Ln 1, Col 1</span>
+    <span id="status-encoding">UTF-8</span>
+  </div>
+
+  <!-- AI Assistant Panel -->
+  <div id="ai-panel" class="ai-panel hidden">
+    <div class="ai-header">
+      <span class="ai-title">🤖 AI 助手</span>
+      <button id="ai-close" class="ai-close" title="关闭">✕</button>
+    </div>
+    <div class="ai-actions">
+      <button class="ai-action-btn" data-act="continue">✍️ 续写</button>
+      <button class="ai-action-btn" data-act="polish">💎 润色</button>
+      <button class="ai-action-btn" data-act="translate">🌐 翻译</button>
+      <button class="ai-action-btn" data-act="summary">📋 总结</button>
+      <button id="ai-clear" class="ai-clear" title="清空对话">🗑 清空</button>
+    </div>
+    <div id="ai-output" class="ai-output">选择上方动作，或在下方输入自定义指令。</div>
+    <div class="ai-input-area">
+      <textarea id="ai-input" class="ai-input" placeholder="输入指令，例如：帮我润色这段文字..."></textarea>
+      <button id="ai-send" class="ai-send-btn">发送</button>
+    </div>
+    <div id="ai-status" class="ai-status">未配置 API — 请先在 ⚙ 设置 中填写接口信息</div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settings-overlay" class="settings-overlay hidden">
+    <div class="settings-modal">
+      <div class="settings-header">
+        <h2>⚙ 设置</h2>
+        <button id="settings-close" class="settings-close">✕</button>
+      </div>
+      <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="ai">AI 助手</button>
+        <button class="settings-tab" data-tab="theme">主题</button>
+        <button class="settings-tab" data-tab="editor">编辑器</button>
+        <button class="settings-tab" data-tab="about">关于</button>
+      </div>
+      <div class="settings-body">
+        <!-- AI Tab -->
+        <div id="settings-tab-ai" class="settings-section active">
+          <div class="setting-item">
+            <label class="setting-label">API 接口地址</label>
+            <input id="set-api-url" class="setting-input" placeholder="https://api.example.com/v1/chat/completions" />
+            <div class="setting-hint">支持 OpenAI / Claude / 本地 Ollama 等兼容接口</div>
+          </div>
+          <div class="setting-item">
+            <label class="setting-label">API Key</label>
+            <input id="set-api-key" class="setting-input" type="password" placeholder="sk-..." />
+          </div>
+          <div class="setting-item">
+            <label class="setting-label">模型名称</label>
+            <input id="set-api-model" class="setting-input" placeholder="gpt-4o / claude-sonnet-4-5 等" />
+          </div>
+          <div class="setting-item">
+            <label class="setting-label">温度 (Temperature): <span id="set-temp-val">0.7</span></label>
+            <input id="set-temperature" type="range" min="0" max="2" step="0.1" value="0.7" style="width:100%" />
+            <div class="setting-hint">0 = 精确，2 = 更有创意</div>
+          </div>
+          <div class="setting-item">
+            <label class="setting-label">思考模式 (Thinking)</label>
+            <div class="setting-row">
+              <label class="switch-label">
+                <input id="set-thinking" type="checkbox" />
+                <span class="switch-slider"></span>
+              </label>
+              <span id="set-thinking-status" style="font-size:13px;color:#71717a">关闭</span>
+            </div>
+            <div class="setting-hint">开启后模型会先思考再回答，响应更慢但质量更高；关闭可加快响应速度</div>
+          </div>
+        </div>
+        <!-- Theme Tab -->
+        <div id="settings-tab-theme" class="settings-section">
+          <div class="setting-item">
+            <label class="setting-label">预览主题</label>
+            <div class="theme-preview-swatches">
+              <div class="theme-swatch" data-theme="dark" style="background:#1e1e1e;border:1px solid #3f3f46" title="Dark"></div>
+              <div class="theme-swatch" data-theme="light" style="background:#ffffff;border:1px solid #d0d7de" title="Light"></div>
+              <div class="theme-swatch" data-theme="sepia" style="background:#f5f0e8;border:1px solid #c4a882" title="Sepia"></div>
+              <div class="theme-swatch" data-theme="nord" style="background:#2e3440;border:1px solid #4c566a" title="Nord"></div>
+            </div>
+          </div>
+          <div class="setting-item">
+            <label class="setting-label">编辑器主题</label>
+            <select id="set-editor-theme" class="setting-select">
+              <option value="dracula">Dracula (暗色)</option>
+              <option value="eclipse">Eclipse (亮色)</option>
+              <option value="idea">Idea (亮色)</option>
+            </select>
+          </div>
+          <div class="setting-item">
+            <label class="setting-label">自定义 CSS（预览区）</label>
+            <textarea id="set-custom-css" class="setting-textarea" placeholder=".preview-content { font-size: 16px; }"></textarea>
+            <div class="setting-hint">直接输入 CSS 规则，应用于预览区域</div>
+          </div>
+        </div>
+        <!-- Editor Tab -->
+        <div id="settings-tab-editor" class="settings-section">
+          <div class="setting-item">
+            <label class="setting-label">字体大小</label>
+            <input id="set-font-size" class="setting-input" type="number" min="10" max="28" value="14" />
+          </div>
+          <div class="setting-item">
+            <label class="setting-label">Tab 宽度</label>
+            <input id="set-tab-size" class="setting-input" type="number" min="2" max="8" value="2" />
+          </div>
+        </div>
+        <!-- About Tab -->
+        <div id="settings-tab-about" class="settings-section">
+          <div class="setting-item">
+            <label class="setting-label">Markdown Editor</label>
+            <div class="setting-hint">版本 1.0.0 · 基于 Electron + CodeMirror + marked 构建</div>
+          </div>
+          <div class="setting-item">
+            <label class="setting-label">快捷键</label>
+            <div class="setting-hint">Ctrl+B 粗体 · Ctrl+I 斜体 · Ctrl+H 标题 · Ctrl+Q 引用 · Ctrl+K 链接 · Ctrl+N 新建标签 · Ctrl+W 关闭标签</div>
+          </div>
+        </div>
+      </div>
+      <div class="settings-footer">
+        <button id="settings-reset" class="settings-btn">恢复默认</button>
+        <button id="settings-save" class="settings-btn primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating collapsed icon -->
+  <div id="collapsed-icon" class="collapsed-icon hidden" title="恢复窗口">📝</div>
+
+  <!-- Libraries -->
+  <script src="node_modules/codemirror/lib/codemirror.js"></script>
+  <script src="node_modules/codemirror/mode/markdown/markdown.js"></script>
+  <script src="node_modules/codemirror/addon/edit/closebrackets.js"></script>
+  <script src="node_modules/codemirror/addon/edit/matchbrackets.js"></script>
+  <script src="node_modules/highlight.js/lib/index.js"></script>
+  <script src="node_modules/marked/lib/marked.umd.js"></script>
+  <script src="node_modules/dompurify/dist/purify.min.js"></script>
+  <script src="node_modules/mermaid/dist/mermaid.min.js"></script>
+  <script src="node_modules/diff/dist/diff.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
