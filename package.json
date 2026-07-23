@@ -52,7 +52,12 @@
           ]
         }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "fileAssociations": [
+        { "ext": "md", "name": "Markdown", "description": "Markdown 文档" },
+        { "ext": "markdown", "name": "Markdown", "description": "Markdown 文档" },
+        { "ext": "txt", "name": "Text", "description": "文本文件" }
+      ]
     },
     "portable": {
       "artifactName": "MarkdownEditor-Portable-v${version}.exe"

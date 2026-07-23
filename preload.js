@@ -69,4 +69,11 @@ contextBridge.exposeInMainWorld('api', {
   // Renderer sends a tool's result back to the main process.
   sendToolResult: (requestId, result, error) =>
     ipcRenderer.send('agent:toolResult', { requestId, result, error }),
+  // Shell: open a file passed via OS "Open With" (cold start).
+  getPendingPath: () => ipcRenderer.invoke('shell:getPendingPath'),
+  onShellOpenFile: (cb) => {
+    const listener = (e, filePath) => cb(filePath);
+    ipcRenderer.on('shell:openFile', listener);
+    return () => ipcRenderer.removeListener('shell:openFile', listener);
+  },
 });

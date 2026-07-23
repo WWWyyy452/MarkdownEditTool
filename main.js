@@ -8,6 +8,9 @@ const { URL } = require('url');
 let mainWindow;
 let isAlwaysOnTop = false;
 
+// File path passed via OS "Open With" (cold start) — consumed once window ready.
+let pendingOpenPath = null;
+
 // Floating / edge-snap state lives in the main process so edge detection
 // can react to real window movement (on('moved')) instead of polling.
 let floatingMode = false;
@@ -56,7 +59,34 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+// --- Single-instance lock + "Open With" file handling ---
+// When the user opens a file via the OS while the app is already running,
+// Windows/macOS launches a second instance. We grab its argv and forward
+// the path to the first instance, then bail out.
+const gotLock = app.requestSingleInstanceLock();
+
+if (!gotLock) {
+  // Another instance already owns the lock — quit immediately; the first
+  // instance received our argv via 'second-instance'.
+  app.quit();
+} else {
+  app.on('second-instance', (event, argv, workingDirectory) => {
+    // argv[1..] holds the file path passed by the OS.
+    const filePath = extractFilePath(argv);
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+    if (filePath) sendFileToRenderer(filePath);
+  });
+
+  app.whenReady().then(() => {
+    createWindow();
+    // Cold start: a file path may already be in argv before the window is
+    // ready. Stash it; the renderer fetches it once loaded.
+    pendingOpenPath = extractFilePath(process.argv);
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -64,6 +94,38 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});
+
+// Pull a Markdown/text file path out of process.argv (OS "Open With").
+// Only matches explicit .md/.markdown/.txt extensions — no fuzzy fallback,
+// otherwise internal Windows paths (e.g. temp dirs containing dots) get
+// misread as documents when launching the portable exe directly.
+function extractFilePath(argv) {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith('--') || a.startsWith('-')) continue;
+    // skip the executable / app path itself
+    if (a.endsWith('.exe') || a.toLowerCase().includes('electron')) continue;
+    if (/\.(md|markdown|txt)$/i.test(a)) return a;
+  }
+  return null;
+}
+
+// Forward a file path to the renderer, either now (if ready) or as a
+// pending request the renderer can poll.
+function sendFileToRenderer(filePath) {
+  if (mainWindow && mainWindow.webContents && !mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.send('shell:openFile', filePath);
+  } else {
+    pendingOpenPath = filePath;
+  }
+}
+
+// Renderer calls this once it's ready to receive a pending cold-start path.
+ipcMain.handle('shell:getPendingPath', () => {
+  const p = pendingOpenPath;
+  pendingOpenPath = null;
+  return p;
 });
 
 // --- Window controls ---
@@ -338,7 +400,8 @@ ipcMain.handle('dialog:saveDOCX', async (e, markdown, baseName) => {
   if (result.canceled || !result.filePath) return null;
 
   const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
-    BorderStyle, ImageRun, ExternalHyperlink, LevelFormat } = require('docx');
+    BorderStyle, ImageRun, ExternalHyperlink, LevelFormat,
+    Header, Footer, PageNumber } = require('docx');
   // marked v18 is ESM-only → use dynamic import
   const { marked } = await import('marked');
 
@@ -357,7 +420,8 @@ ipcMain.handle('dialog:saveDOCX', async (e, markdown, baseName) => {
       case 'em': return inlineRuns(token.tokens || token.text, cc).map(r => new TextRun({ ...r.options, italics: true, color: cc || r.options?.color }));
       case 'del': return inlineRuns(token.tokens || token.text, cc).map(r => new TextRun({ ...r.options, strike: true, color: cc || r.options?.color }));
       case 'codespan': return [new TextRun({ text: token.text, font: 'Consolas', color: '282828' })];
-      case 'link': return [new ExternalHyperlink({ children: inlineRuns(token.tokens || token.text, cc), link: token.href })];
+      case 'link': return [new ExternalHyperlink({ children: inlineRuns(token.tokens || token.text, cc).map(r => new TextRun({ ...r.options, color: '0563C1', underline: {} })), link: token.href })];
+      case 'checkbox': return [new TextRun({ text: token.checked ? '☑ ' : '☐ ', font: { name: 'Segoe UI Symbol', hint: 'default' } })];
       case 'br': return [new TextRun({ break: 1 })];
       case 'escape': return [new TextRun(cc ? { text: token.text, color: cc } : { text: token.text })];
       case 'image': {
@@ -372,8 +436,8 @@ ipcMain.handle('dialog:saveDOCX', async (e, markdown, baseName) => {
   function blockToElements(token) {
     switch (token.type) {
       case 'heading': {
-        const map = { 1: HeadingLevel.HEADING_1, 2: HeadingLevel.HEADING_2, 3: HeadingLevel.HEADING_3 };
-        const level = map[token.depth] || HeadingLevel.HEADING_4;
+        const map = { 1: HeadingLevel.HEADING_1, 2: HeadingLevel.HEADING_2, 3: HeadingLevel.HEADING_3, 4: HeadingLevel.HEADING_4, 5: HeadingLevel.HEADING_5, 6: HeadingLevel.HEADING_6 };
+        const level = map[token.depth] || HeadingLevel.HEADING_6;
         // force black text to override Word's built-in blue heading color
         return [new Paragraph({ heading: level, children: inlineRuns(token.tokens || token.text, '000000') })];
       }
@@ -383,7 +447,7 @@ ipcMain.handle('dialog:saveDOCX', async (e, markdown, baseName) => {
         if (first?.type === 'image') {
           return [new Paragraph({ children: [new TextRun({ text: `[图片: ${first.href}]`, italics: true, color: '888888' })] })];
         }
-        return [new Paragraph({ children: inlineRuns(token.tokens || token.text), spacing: { after: 120 } })];
+        return [new Paragraph({ children: inlineRuns(token.tokens || token.text), spacing: { after: 120, line: 360 }, indent: { firstLine: 480 } })];
       }
       case 'blockquote': {
         return (token.tokens || []).map(t =>
@@ -399,16 +463,23 @@ ipcMain.handle('dialog:saveDOCX', async (e, markdown, baseName) => {
         const fmt = token.ordered ? LevelFormat.DECIMAL : LevelFormat.BULLET;
         const out = [];
         token.items.forEach((item) => {
-          // each item may contain multiple block tokens (paragraph + sub-list)
-          const para = new Paragraph({ numbering: { reference: 'md-list', level: 0 }, children: inlineRuns(item.tokens?.[0] || item.text) });
-          out.push(para);
-          // additional blocks inside the item (nested list, etc.)
-          for (let i = 1; i < (item.tokens?.length || 0); i++) {
-            const sub = item.tokens[i];
-            if (sub.type === 'list') {
-              sub.items.forEach((si) => out.push(new Paragraph({ numbering: { reference: 'md-list', level: 1 }, children: inlineRuns(si.tokens?.[0] || si.text) })));
-            }
-          }
+          // item.tokens may be: [checkbox, text, ...] for task items, or [text, ...] for normal
+          // collect all runs from the leading inline tokens (checkbox + text)
+          const runs = [];
+          let subLists = [];
+          (item.tokens || []).forEach((t) => {
+            if (t.type === 'list') { subLists.push(t); return; }
+            runs.push(...inlineRuns(t));
+          });
+          if (runs.length === 0) runs.push(new TextRun(item.text));
+          out.push(new Paragraph({ numbering: { reference: 'md-list', level: 0 }, children: runs }));
+          // nested lists
+          subLists.forEach((sub) => sub.items.forEach((si) => {
+            const sruns = [];
+            (si.tokens || []).forEach((t) => { if (t.type !== 'list') sruns.push(...inlineRuns(t)); });
+            if (sruns.length === 0) sruns.push(new TextRun(si.text));
+            out.push(new Paragraph({ numbering: { reference: 'md-list', level: 1 }, children: sruns }));
+          }));
         });
         return out;
       }
@@ -452,13 +523,72 @@ ipcMain.handle('dialog:saveDOCX', async (e, markdown, baseName) => {
   const doc = new Document({
     creator: 'Markdown Editor',
     title: 'Markdown Document',
+    styles: {
+      default: {
+        document: {
+          run: {
+            font: { name: 'SimSun', hint: 'eastAsia' },
+            size: 24, // 12pt
+          },
+          paragraph: {
+            spacing: { line: 360 }, // 1.5 倍行距
+          },
+        },
+      },
+      paragraphStyles: [
+        { id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+          run: { size: 44, bold: true, color: '000000', font: { name: 'SimSun', hint: 'eastAsia' } },
+          paragraph: { spacing: { before: 240, after: 120 }, outlineLevel: 0, keepNext: true } },
+        { id: 'Heading2', name: 'Heading 2', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+          run: { size: 36, bold: true, color: '000000', font: { name: 'SimSun', hint: 'eastAsia' } },
+          paragraph: { spacing: { before: 200, after: 100 }, outlineLevel: 1, keepNext: true } },
+        { id: 'Heading3', name: 'Heading 3', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+          run: { size: 30, bold: true, color: '000000', font: { name: 'SimSun', hint: 'eastAsia' } },
+          paragraph: { spacing: { before: 160, after: 80 }, outlineLevel: 2, keepNext: true } },
+        { id: 'Heading4', name: 'Heading 4', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+          run: { size: 26, bold: true, color: '000000', font: { name: 'SimSun', hint: 'eastAsia' } },
+          paragraph: { spacing: { before: 140, after: 70 }, outlineLevel: 3, keepNext: true } },
+        { id: 'Heading5', name: 'Heading 5', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+          run: { size: 24, bold: true, color: '000000', font: { name: 'SimSun', hint: 'eastAsia' } },
+          paragraph: { spacing: { before: 120, after: 60 }, outlineLevel: 4, keepNext: true } },
+        { id: 'Heading6', name: 'Heading 6', basedOn: 'Normal', next: 'Normal', quickFormat: true,
+          run: { size: 24, bold: true, italics: true, color: '000000', font: { name: 'SimSun', hint: 'eastAsia' } },
+          paragraph: { spacing: { before: 100, after: 50 }, outlineLevel: 5, keepNext: true } },
+      ],
+    },
     numbering: {
       config: [{ reference: 'md-list', levels: [
         { level: 0, format: LevelFormat.BULLET, text: '•', alignment: AlignmentType.LEFT, style: { paragraph: { indent: { left: 720, hanging: 360 } } } },
         { level: 1, format: LevelFormat.BULLET, text: '◦', alignment: AlignmentType.LEFT, style: { paragraph: { indent: { left: 1440, hanging: 360 } } } },
       ] }],
     },
-    sections: [{ children: elements }],
+    sections: [{
+      properties: {
+        page: {
+          size: { width: 11906, height: 16838 }, // A4
+          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }, // 1 inch
+        },
+      },
+      headers: {
+        default: new Header({
+          children: [new Paragraph({
+            alignment: AlignmentType.RIGHT,
+            children: [new TextRun({ text: baseName || 'Markdown Document', size: 18, color: '888888', font: { name: 'SimSun', hint: 'eastAsia' } })],
+          })],
+        }),
+      },
+      footers: {
+        default: new Footer({
+          children: [new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              new TextRun({ children: ['- ', PageNumber.CURRENT, ' -'], size: 18, color: '888888', font: { name: 'SimSun', hint: 'eastAsia' } }),
+            ],
+          })],
+        }),
+      },
+      children: elements,
+    }],
   });
 
   const buffer = await Packer.toBuffer(doc);

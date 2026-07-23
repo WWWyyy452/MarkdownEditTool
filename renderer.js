@@ -2027,6 +2027,35 @@ greet('世界');
   if (aiBtn) aiBtn.addEventListener('click', toggleAIPanel);
 
   // ---------- Initial load ----------
-  createDocument('示例文档', null, loadSampleIntoActive());
   updateAIStatus();
+
+  // ---------- Shell: open file passed via OS "Open With" ----------
+  // Cold start: main process may have stashed a path from process.argv.
+  // If a file is being opened, skip the sample document.
+  window.api.getPendingPath().then(filePath => {
+    if (filePath) {
+      openFileByPath(filePath);
+    } else {
+      createDocument('示例文档', null, loadSampleIntoActive());
+    }
+  });
+  // Warm start: app already running, OS routes the file to it.
+  window.api.onShellOpenFile(filePath => openFileByPath(filePath));
+
+  async function openFileByPath(filePath) {
+    try {
+      const result = await window.api.readFileByPath(filePath);
+      if (result && result.error) {
+        // file missing — surface a notice but still open a stub
+        createDocument(filePath.split(/[\\/]/).pop(), null, '# ⚠️ 文件未找到\n\n`' + filePath + '`');
+        showToast('文件未找到: ' + filePath, 'error');
+        return;
+      }
+      const name = filePath.split(/[\\/]/).pop();
+      openFileIntoActive(result.filePath, result.content, name);
+    } catch (err) {
+      console.error('Shell open failed:', err);
+      showToast('打开文件失败', 'error');
+    }
+  }
 })();
