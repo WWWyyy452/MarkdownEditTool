@@ -17,6 +17,7 @@
   "dependencies": {
     "codemirror": "^5.65.21",
     "diff": "^5.2.2",
+    "docx": "^9.7.1",
     "dompurify": "^3.4.12",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.6",

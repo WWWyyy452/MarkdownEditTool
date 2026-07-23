@@ -41,6 +41,25 @@
   function uid() { return 'd' + (nextDocId++) + '_' + Date.now().toString(36); }
   function getActiveDoc() { return documents.find(d => d.id === activeDocId) || null; }
 
+  // ---------- Toast notifications ----------
+  function showToast(msg, type = 'success') {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'toast-container';
+      container.className = 'toast-container';
+      document.body.appendChild(container);
+    }
+    const t = document.createElement('div');
+    t.className = 'toast ' + type;
+    t.textContent = msg;
+    container.appendChild(t);
+    setTimeout(() => {
+      t.classList.add('fade-out');
+      t.addEventListener('animationend', () => t.remove(), { once: true });
+    }, 2500);
+  }
+
   // Pull the live editor state (content + cursor) into a document object.
   function syncEditorToDoc(doc) {
     if (!doc) return;
@@ -666,6 +685,13 @@
     } catch (err) { console.error('Save failed:', err); }
   }
 
+  // Derive a base filename (without extension) from the current file path,
+  // falling back to 'document' for unsaved buffers.
+  function currentBaseName() {
+    if (currentFilePath) return currentFilePath.replace(/\.[^.]+$/, '').split(/[\\/]/).pop();
+    return 'document';
+  }
+
   async function exportHTML() {
     hideExportMenu();
     try {
@@ -673,9 +699,10 @@
         ADD_TAGS: ['input'],
         ADD_ATTR: ['type', 'checked', 'disabled', 'data-lang', 'target', 'rel'],
       });
-      const path = await window.api.saveHTML(buildStyledHTML(bodyHtml));
-      if (path) console.log('Exported:', path);
-    } catch (err) { console.error('Export failed:', err); }
+      const path = await window.api.saveHTML(buildStyledHTML(bodyHtml), currentBaseName());
+      if (path) showToast('导出 HTML 成功');
+      else return; // user canceled
+    } catch (err) { console.error('Export failed:', err); showToast('导出 HTML 失败', 'error'); }
   }
 
   async function exportPDF() {
@@ -685,9 +712,19 @@
         ADD_TAGS: ['input'],
         ADD_ATTR: ['type', 'checked', 'disabled', 'data-lang', 'target', 'rel'],
       });
-      const path = await window.api.savePDF(buildStyledHTML(bodyHtml));
-      if (path) console.log('Exported PDF:', path);
-    } catch (err) { console.error('Export PDF failed:', err); }
+      const path = await window.api.savePDF(buildStyledHTML(bodyHtml), currentBaseName());
+      if (path) showToast('导出 PDF 成功');
+      else return;
+    } catch (err) { console.error('Export PDF failed:', err); showToast('导出 PDF 失败', 'error'); }
+  }
+
+  async function exportDOCX() {
+    hideExportMenu();
+    try {
+      const path = await window.api.saveDOCX(cm.getValue(), currentBaseName());
+      if (path) showToast('导出 Word 成功');
+      else return;
+    } catch (err) { console.error('Export DOCX failed:', err); showToast('导出 Word 失败', 'error'); }
   }
 
   // --- Export dropdown menu ---
@@ -704,13 +741,15 @@
     dd.style.left = Math.max(8, r.right - 180) + 'px';
     dd.innerHTML =
       '<div class="export-option" data-fmt="html"><span>🌐</span> 导出为 HTML</div>' +
-      '<div class="export-option" data-fmt="pdf"><span>📄</span> 导出为 PDF</div>';
+      '<div class="export-option" data-fmt="pdf"><span>📄</span> 导出为 PDF</div>' +
+      '<div class="export-option" data-fmt="docx"><span>📝</span> 导出为 Word</div>';
     dd.addEventListener('click', (e) => {
       const opt = e.target.closest('.export-option');
       if (!opt) return;
       const fmt = opt.dataset.fmt;
       if (fmt === 'html') exportHTML();
       else if (fmt === 'pdf') exportPDF();
+      else if (fmt === 'docx') exportDOCX();
     });
     document.body.appendChild(dd);
     // Close on outside click

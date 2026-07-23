@@ -32,8 +32,9 @@ contextBridge.exposeInMainWorld('api', {
   // File operations
   openFile: () => ipcRenderer.invoke('dialog:openFile'),
   saveFile: (content) => ipcRenderer.invoke('dialog:saveFile', content),
-  saveHTML: (html) => ipcRenderer.invoke('dialog:saveHTML', html),
-  savePDF: (html) => ipcRenderer.invoke('dialog:savePDF', html),
+  saveHTML: (html, baseName) => ipcRenderer.invoke('dialog:saveHTML', html, baseName),
+  savePDF: (html, baseName) => ipcRenderer.invoke('dialog:savePDF', html, baseName),
+  saveDOCX: (markdown, baseName) => ipcRenderer.invoke('dialog:saveDOCX', markdown, baseName),
   readFileByPath: (filePath) => ipcRenderer.invoke('file:readByPath', filePath),
   writeFileByPath: (filePath, content) => ipcRenderer.invoke('file:writeByPath', filePath, content),
   savePrompt: (fileName) => ipcRenderer.invoke('dialog:savePrompt', fileName),

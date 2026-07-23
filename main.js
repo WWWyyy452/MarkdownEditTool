@@ -251,18 +251,61 @@ ipcMain.handle('dialog:saveFile', async (e, content) => {
 });
 
 // --- Export PDF ---
-ipcMain.handle('dialog:savePDF', async (e, html) => {
+// Wrap body HTML in a light-themed document so the PDF reads like a normal
+// printed page instead of capturing the app's dark preview theme.
+function wrapPrintHtml(bodyHtml) {
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { margin: 2cm 2.2cm; size: A4; }
+  body{
+    font-family:-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;
+    max-width:none;margin:0;padding:0;
+    background:#fff;color:#1f2937;line-height:1.7;
+    font-size:14px;
+  }
+  h1,h2,h3,h4,h5,h2{color:#111827;margin-top:1.4em;margin-bottom:.5em;font-weight:700}
+  h1{font-size:1.9em;border-bottom:2px solid #e5e7eb;padding-bottom:.3em}
+  h2{font-size:1.45em;border-bottom:1px solid #e5e7eb;padding-bottom:.25em}
+  h3{font-size:1.2em}
+  p{margin:.6em 0}
+  a{color:#2563eb;text-decoration:none}
+  code{background:#f3f4f6;color:#1f2937;padding:.15em .4em;border-radius:4px;border:1px solid #e5e7eb;font-size:.88em;font-family:Consolas,monospace}
+  pre{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:14px;overflow-x:auto}
+  pre code{background:none;border:none;padding:0;font-size:.85em}
+  blockquote{border-left:4px solid #d1d5db;padding:.4em 1em;margin:1em 0;color:#4b5563;background:#f9fafb;border-radius:0 4px 4px 0}
+  table{border-collapse:collapse;margin:1em 0;width:100%}
+  th,td{border:1px solid #d1d5db;padding:7px 12px;text-align:left;font-size:.92em}
+  th{background:#f3f4f6;color:#111827;font-weight:600}
+  hr{border:none;border-top:2px solid #e5e7eb;margin:2em 0}
+  img{max-width:100%}
+  ul,ol{padding-left:1.5em;margin:.6em 0}
+  li{margin:.25em 0}
+  /* highlight.js overrides for light theme */
+  .hljs{background:transparent;color:#1f2937}
+</style>
+</head>
+<body>${bodyHtml}</body>
+</html>`;
+}
+
+ipcMain.handle('dialog:savePDF', async (e, html, baseName) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     filters: [{ name: 'PDF', extensions: ['pdf'] }],
-    defaultPath: 'document.pdf',
+    defaultPath: (baseName || 'document') + '.pdf',
   });
   if (result.canceled || !result.filePath) return null;
+  // Extract body content from the full HTML doc, then re-wrap with light theme
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  const bodyHtml = bodyMatch ? bodyMatch[1] : html;
   // Create an offscreen window to render the HTML, then print to PDF
   const pdfWin = new BrowserWindow({
     show: false,
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
-  await pdfWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  await pdfWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(wrapPrintHtml(bodyHtml)));
   const data = await pdfWin.webContents.printToPDF({
     marginsType: 0,
     printBackground: true,
@@ -274,13 +317,152 @@ ipcMain.handle('dialog:savePDF', async (e, html) => {
   return result.filePath;
 });
 
-ipcMain.handle('dialog:saveHTML', async (e, html) => {
+ipcMain.handle('dialog:saveHTML', async (e, html, baseName) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     filters: [{ name: 'HTML', extensions: ['html'] }],
-    defaultPath: 'document.html',
+    defaultPath: (baseName || 'document') + '.html',
   });
   if (result.canceled || !result.filePath) return null;
   fs.writeFileSync(result.filePath, html, 'utf-8');
+  return result.filePath;
+});
+
+// --- Export DOCX ---
+// Build a .docx from raw Markdown by lexing it with `marked` and converting
+// the token stream into docx elements.
+ipcMain.handle('dialog:saveDOCX', async (e, markdown, baseName) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    filters: [{ name: 'Word 文档', extensions: ['docx'] }],
+    defaultPath: (baseName || 'document') + '.docx',
+  });
+  if (result.canceled || !result.filePath) return null;
+
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
+    BorderStyle, ImageRun, ExternalHyperlink, LevelFormat } = require('docx');
+  // marked v18 is ESM-only → use dynamic import
+  const { marked } = await import('marked');
+
+  // ---- inline: convert a single marked token (or array) into TextRuns ----
+  // `baseColor` forces a text color (used for headings → black).
+  function inlineRuns(token, baseColor) {
+    const runs = [];
+    const cc = baseColor; // inherit color if set
+    if (typeof token === 'string') return [new TextRun(cc ? { text: token, color: cc } : { text: token })];
+    if (Array.isArray(token)) { token.forEach(t => runs.push(...inlineRuns(t, cc))); return runs; }
+    switch (token.type) {
+      case 'text': // marked v18 text token may carry .tokens (sub-inline)
+        if (token.tokens) return inlineRuns(token.tokens, cc);
+        return [new TextRun(cc ? { text: token.text, color: cc } : { text: token.text })];
+      case 'strong': return inlineRuns(token.tokens || token.text, cc).map(r => new TextRun({ ...r.options, bold: true, color: cc || r.options?.color }));
+      case 'em': return inlineRuns(token.tokens || token.text, cc).map(r => new TextRun({ ...r.options, italics: true, color: cc || r.options?.color }));
+      case 'del': return inlineRuns(token.tokens || token.text, cc).map(r => new TextRun({ ...r.options, strike: true, color: cc || r.options?.color }));
+      case 'codespan': return [new TextRun({ text: token.text, font: 'Consolas', color: '282828' })];
+      case 'link': return [new ExternalHyperlink({ children: inlineRuns(token.tokens || token.text, cc), link: token.href })];
+      case 'br': return [new TextRun({ break: 1 })];
+      case 'escape': return [new TextRun(cc ? { text: token.text, color: cc } : { text: token.text })];
+      case 'image': {
+        // images in inline context — best effort placeholder
+        return [new TextRun({ text: `[图片]`, italics: true, color: '888888' })];
+      }
+      default: return token.text ? [new TextRun(cc ? { text: token.text, color: cc } : { text: token.text })] : [];
+    }
+  }
+
+  // ---- block: convert one marked block token into a docx element (or array) ----
+  function blockToElements(token) {
+    switch (token.type) {
+      case 'heading': {
+        const map = { 1: HeadingLevel.HEADING_1, 2: HeadingLevel.HEADING_2, 3: HeadingLevel.HEADING_3 };
+        const level = map[token.depth] || HeadingLevel.HEADING_4;
+        // force black text to override Word's built-in blue heading color
+        return [new Paragraph({ heading: level, children: inlineRuns(token.tokens || token.text, '000000') })];
+      }
+      case 'paragraph': {
+        // may contain an image child — handle image paragraphs specially
+        const first = token.tokens?.[0];
+        if (first?.type === 'image') {
+          return [new Paragraph({ children: [new TextRun({ text: `[图片: ${first.href}]`, italics: true, color: '888888' })] })];
+        }
+        return [new Paragraph({ children: inlineRuns(token.tokens || token.text), spacing: { after: 120 } })];
+      }
+      case 'blockquote': {
+        return (token.tokens || []).map(t =>
+          new Paragraph({ children: inlineRuns(t.tokens || t.text), indent: { left: 720 }, border: { left: { style: BorderStyle.SINGLE, size: 3, color: '999999' } }, spacing: { after: 80 } })
+        );
+      }
+      case 'code': {
+        return token.text.split('\n').map(line =>
+          new Paragraph({ children: [new TextRun({ text: line || ' ', font: 'Consolas', size: 20 })], shading: { fill: 'F5F5F5' }, spacing: { after: 0 } })
+        );
+      }
+      case 'list': {
+        const fmt = token.ordered ? LevelFormat.DECIMAL : LevelFormat.BULLET;
+        const out = [];
+        token.items.forEach((item) => {
+          // each item may contain multiple block tokens (paragraph + sub-list)
+          const para = new Paragraph({ numbering: { reference: 'md-list', level: 0 }, children: inlineRuns(item.tokens?.[0] || item.text) });
+          out.push(para);
+          // additional blocks inside the item (nested list, etc.)
+          for (let i = 1; i < (item.tokens?.length || 0); i++) {
+            const sub = item.tokens[i];
+            if (sub.type === 'list') {
+              sub.items.forEach((si) => out.push(new Paragraph({ numbering: { reference: 'md-list', level: 1 }, children: inlineRuns(si.tokens?.[0] || si.text) })));
+            }
+          }
+        });
+        return out;
+      }
+      case 'table': {
+        const { Table, TableRow, TableCell, WidthType } = require('docx');
+        // Use fixed DXA widths (1 inch = 1440 DXA). Letter/A4 usable width
+        // with default margins ≈ 9000 DXA. Distribute evenly across columns.
+        const COLS = token.header.length;
+        const COL_WIDTH = Math.floor(9000 / COLS);
+        const rows = [];
+        // header
+        rows.push(new TableRow({ tableHeader: true, children: token.header.map(c =>
+          new TableCell({ children: [new Paragraph({ children: inlineRuns(c.tokens || c.text, '000000') })], width: { size: COL_WIDTH, type: WidthType.DXA } })
+        )}));
+        // body
+        token.rows.forEach(r => rows.push(new TableRow({ children: r.map(c =>
+          new TableCell({ children: [new Paragraph({ children: inlineRuns(c.tokens || c.text) })], width: { size: COL_WIDTH, type: WidthType.DXA } })
+        )})));
+        return [new Table({
+          width: { size: COLS * COL_WIDTH, type: WidthType.DXA },
+          columnSizes: Array(COLS).fill(COL_WIDTH),
+          rows,
+        })];
+      }
+      case 'hr': {
+        return [new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, size: 1, color: 'CCCCCC' } }, children: [] })];
+      }
+      case 'space': return [];
+      case 'html': return [];
+      default: return token.text ? [new Paragraph({ children: [new TextRun(token.text)] })] : [];
+    }
+  }
+
+  const tokens = marked.lexer(markdown);
+  const elements = [];
+  for (const t of tokens) {
+    const els = blockToElements(t);
+    if (els) elements.push(...els);
+  }
+
+  const doc = new Document({
+    creator: 'Markdown Editor',
+    title: 'Markdown Document',
+    numbering: {
+      config: [{ reference: 'md-list', levels: [
+        { level: 0, format: LevelFormat.BULLET, text: '•', alignment: AlignmentType.LEFT, style: { paragraph: { indent: { left: 720, hanging: 360 } } } },
+        { level: 1, format: LevelFormat.BULLET, text: '◦', alignment: AlignmentType.LEFT, style: { paragraph: { indent: { left: 1440, hanging: 360 } } } },
+      ] }],
+    },
+    sections: [{ children: elements }],
+  });
+
+  const buffer = await Packer.toBuffer(doc);
+  fs.writeFileSync(result.filePath, buffer);
   return result.filePath;
 });
 
