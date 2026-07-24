@@ -4,6 +4,7 @@ const fs = require('fs');
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
+const iconv = require('iconv-lite');
 
 let mainWindow;
 let isAlwaysOnTop = false;
@@ -246,12 +247,48 @@ ipcMain.handle('window:snapToNearestEdge', () => {
   return edge;
 });
 
+// --- Encoding-aware file reading ---
+// Read a file and decode it to UTF-8, auto-detecting legacy encodings
+// (GBK/GB18030/BIG5 etc.) so Chinese Windows files don't show as garbled.
+function readTextFile(filePath) {
+  const buf = fs.readFileSync(filePath);
+
+  // BOM detection
+  if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) {
+    return iconv.decode(buf, 'utf-8'); // BOM present, strip it via utf-8 decode
+  }
+  if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xFE) {
+    return iconv.decode(buf, 'utf-16le');
+  }
+  if (buf.length >= 2 && buf[0] === 0xFE && buf[1] === 0xFF) {
+    return iconv.decode(buf, 'utf-16be');
+  }
+
+  // Try UTF-8 first — if it round-trips cleanly, it's UTF-8.
+  const utf8 = iconv.decode(buf, 'utf-8');
+  if (iconv.encode(utf8, 'utf-8').equals(buf)) {
+    return utf-8;
+  }
+
+  // Not valid UTF-8: try Chinese legacy encodings.
+  for (const enc of ['gb18030', 'gbk', 'gb2312', 'big5']) {
+    const decoded = iconv.decode(buf, enc);
+    // Heuristic: if decoding produced CJK characters and no lone surrogates, accept it.
+    if (/[一-鿿　-〿＀-￯]/.test(decoded)) {
+      return decoded;
+    }
+  }
+
+  // Fallback: return UTF-8 as-is (may contain replacement chars, but won't crash).
+  return utf8;
+}
+
 // --- File history support ---
 // Read a file by absolute path (used by the recent-files history list).
 ipcMain.handle('file:readByPath', async (e, filePath) => {
   try {
     if (!fs.existsSync(filePath)) return { error: 'notfound' };
-    const content = fs.readFileSync(filePath, 'utf-8');
+    const content = readTextFile(filePath);
     return { filePath, content };
   } catch (err) {
     return { error: err.message };
@@ -298,7 +335,7 @@ ipcMain.handle('dialog:openFile', async () => {
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   const filePath = result.filePaths[0];
-  const content = fs.readFileSync(filePath, 'utf-8');
+  const content = readTextFile(filePath);
   return { filePath, content };
 });
 
