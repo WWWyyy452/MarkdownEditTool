@@ -73,7 +73,7 @@ if (!gotLock) {
 } else {
   app.on('second-instance', (event, argv, workingDirectory) => {
     // argv[1..] holds the file path passed by the OS.
-    const filePath = extractFilePath(argv);
+    const filePath = extractFilePath(argv, workingDirectory);
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
@@ -85,7 +85,7 @@ if (!gotLock) {
     createWindow();
     // Cold start: a file path may already be in argv before the window is
     // ready. Stash it; the renderer fetches it once loaded.
-    pendingOpenPath = extractFilePath(process.argv);
+    pendingOpenPath = extractFilePath(process.argv, process.cwd());
   });
 }
 
@@ -101,28 +101,42 @@ app.on('activate', () => {
 // Only matches explicit .md/.markdown/.txt extensions — no fuzzy fallback,
 // otherwise internal Windows paths (e.g. temp dirs containing dots) get
 // misread as documents when launching the portable exe directly.
-function extractFilePath(argv) {
+//
+// Windows shell frequently wraps the path in quotes (e.g. "C:\foo\bar.md")
+// or passes a relative name; strip quotes and resolve against the working
+// directory so fs.existsSync can actually find the file.
+function extractFilePath(argv, workingDirectory) {
   for (let i = 1; i < argv.length; i++) {
-    const a = argv[i];
+    let a = argv[i];
     if (a.startsWith('--') || a.startsWith('-')) continue;
     // skip the executable / app path itself
     if (a.endsWith('.exe') || a.toLowerCase().includes('electron')) continue;
-    if (/\.(md|markdown|txt)$/i.test(a)) return a;
+    if (!/\.(md|markdown|txt)$/i.test(a)) continue;
+    // strip surrounding quotes the shell tacks on
+    a = a.replace(/^["']+|["']+$/g, '');
+    // normalize "C:\foo\bar.md:" stream-suffix and resolve relative paths
+    a = a.replace(/:+$/g, '');
+    a = path.resolve(workingDirectory || process.cwd(), a);
+    return a;
   }
   return null;
 }
 
 // Forward a file path to the renderer, either now (if ready) or as a
-// pending request the renderer can poll.
+// pending request the renderer can poll. We always stash into
+// pendingOpenPath as well so a warm-start event that fires before the
+// renderer has registered its listener is never lost — the renderer
+// drains pendingOpenPath on startup and dedupes against the event.
 function sendFileToRenderer(filePath) {
+  pendingOpenPath = filePath;
   if (mainWindow && mainWindow.webContents && !mainWindow.webContents.isLoading()) {
     mainWindow.webContents.send('shell:openFile', filePath);
-  } else {
-    pendingOpenPath = filePath;
   }
 }
 
 // Renderer calls this once it's ready to receive a pending cold-start path.
+// Returns null if nothing is pending. The renderer dedupes against any
+// 'shell:openFile' event that may have arrived for the same path.
 ipcMain.handle('shell:getPendingPath', () => {
   const p = pendingOpenPath;
   pendingOpenPath = null;
@@ -267,7 +281,7 @@ function readTextFile(filePath) {
   // Try UTF-8 first — if it round-trips cleanly, it's UTF-8.
   const utf8 = iconv.decode(buf, 'utf-8');
   if (iconv.encode(utf8, 'utf-8').equals(buf)) {
-    return utf-8;
+    return utf8;
   }
 
   // Not valid UTF-8: try Chinese legacy encodings.
@@ -287,11 +301,14 @@ function readTextFile(filePath) {
 // Read a file by absolute path (used by the recent-files history list).
 ipcMain.handle('file:readByPath', async (e, filePath) => {
   try {
-    if (!fs.existsSync(filePath)) return { error: 'notfound' };
-    const content = readTextFile(filePath);
-    return { filePath, content };
+    const normalized = path.normalize(filePath || '');
+    if (!normalized || !fs.existsSync(normalized)) {
+      return { error: 'notfound', filePath: normalized };
+    }
+    const content = readTextFile(normalized);
+    return { filePath: normalized, content };
   } catch (err) {
-    return { error: err.message };
+    return { error: err.message, filePath };
   }
 });
 // Write content to an absolute path without showing a dialog (save in place).

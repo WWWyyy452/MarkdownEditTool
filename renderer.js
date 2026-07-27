@@ -2030,17 +2030,30 @@ greet('世界');
   updateAIStatus();
 
   // ---------- Shell: open file passed via OS "Open With" ----------
+  // Track the last path we opened so a cold-start pending path and the
+  // warm-start 'shell:openFile' event (which can carry the same path)
+  // don't double-open the file.
+  let lastOpenedPath = null;
+  function dedupedOpenFileByPath(filePath) {
+    if (!filePath) return;
+    if (lastOpenedPath === filePath) return;
+    lastOpenedPath = filePath;
+    openFileByPath(filePath);
+  }
+
+  // Warm start: app already running, OS routes the file to it. Register
+  // this listener BEFORE polling the cold-start pending path so we never
+  // miss an event that fires in the same tick.
+  window.api.onShellOpenFile(filePath => dedupedOpenFileByPath(filePath));
   // Cold start: main process may have stashed a path from process.argv.
   // If a file is being opened, skip the sample document.
   window.api.getPendingPath().then(filePath => {
     if (filePath) {
-      openFileByPath(filePath);
+      dedupedOpenFileByPath(filePath);
     } else {
       createDocument('示例文档', null, loadSampleIntoActive());
     }
   });
-  // Warm start: app already running, OS routes the file to it.
-  window.api.onShellOpenFile(filePath => openFileByPath(filePath));
 
   async function openFileByPath(filePath) {
     try {
